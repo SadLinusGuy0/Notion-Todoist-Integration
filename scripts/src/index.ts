@@ -1,5 +1,5 @@
 import dotenv = require('dotenv'); // key environment
-import {Task, TodoistApi} from '@doist/todoist-api-typescript'; // todoist api
+import {Task, TodoistApi, GetTasksResponse} from '@doist/todoist-api-typescript'; // todoist api
 import {Client} from '@notionhq/client'; // notion api
 import {
   PageObjectResponse,
@@ -19,6 +19,22 @@ const todoistApi: TodoistApi = new TodoistApi(todoistKey);
 const notionApi: Client = new Client({auth: notionKey});
 
 // ------------ General helper function ---------------------- //
+
+/**
+ * Fetches all Todoist tasks, handling cursor-based pagination introduced in v6.
+ */
+async function getAllTodoistTasks(args: Parameters<typeof todoistApi.getTasks>[0] = {}): Promise<Task[]> {
+  const tasks: Task[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const response: GetTasksResponse = await todoistApi.getTasks({...args, cursor});
+    tasks.push(...response.results);
+    cursor = response.nextCursor;
+  } while (cursor !== null);
+
+  return tasks;
+}
 
 /**
  * It takes an object and returns a Map with the same keys and values
@@ -252,7 +268,7 @@ async function newNotionPage(todoistTask: Task): Promise<PageObjectResponse> {
         number: Number(todoistTask.id),
       },
       Status: {
-        checkbox: todoistTask.isCompleted,
+        checkbox: todoistTask.checked,
       },
       URL: {
         url: todoistTask.url,
@@ -321,7 +337,7 @@ async function updateNotionPage(
         number: Number(todoistTask.id),
       },
       Status: {
-        checkbox: todoistTask.isCompleted,
+        checkbox: todoistTask.checked,
       },
       URL: {
         url: todoistTask.url,
@@ -454,7 +470,7 @@ function myNotionIndexOf(notionpageID: string): number {
  * as its todoist counterpart
  */
 async function storeCurrentSyncedTasks(): Promise<void> {
-  const todoistTaskList = await todoistApi.getTasks();
+  const todoistTaskList = await getAllTodoistTasks();
   const len: number = todoistTaskList.length;
 
   for (let i = 0; i < len; i++) {
@@ -492,8 +508,8 @@ async function bubbleSortIDs(): Promise<void> {
       const todoistTask: Task = await todoistApi.getTask(todoistID);
       const nextTodoistTask: Task = await todoistApi.getTask(nextTodoistID);
 
-      const createdTime = new Date(todoistTask.createdAt);
-      const nextCreatedTime = new Date(nextTodoistTask.createdAt);
+      const createdTime = new Date(todoistTask.addedAt ?? 0);
+      const nextCreatedTime = new Date(nextTodoistTask.addedAt ?? 0);
 
       if (createdTime > nextCreatedTime) {
         IDs.todoistTaskIDs[i] = nextTodoistID;
@@ -531,7 +547,7 @@ async function checkTodoistCompletion(
       const todoistID = IDs.todoistTaskIDs[i];
       const todoistTask = await todoistApi.getTask(todoistID);
 
-      if (todoistTask.isCompleted) {
+      if (todoistTask.checked) {
         await updateNotionPage(IDs.notionPageIDs[i], todoistTask);
       }
     }
@@ -609,7 +625,7 @@ async function checkNotionCompletion(
 async function checkNotionIncompletion(
   taskList: Array<PageObjectResponse>
 ): Promise<void> {
-  const activeTodoistTasks: Array<Task> = await todoistApi.getTasks();
+  const activeTodoistTasks: Array<Task> = await getAllTodoistTasks();
   const activeTodoistTaskIds: Array<string> = [];
 
   for (let i = 0; i < activeTodoistTasks.length; i++) {
@@ -643,7 +659,7 @@ async function notionUpToDateCheck(
   lastCheckedTodoistIndex: number
 ): Promise<number> {
   // get list of todoist *active tasks
-  const taskList: Array<Task> = await todoistApi.getTasks();
+  const taskList: Array<Task> = await getAllTodoistTasks();
 
   // check if a task was completed in todoist
   lastCheckedTodoistIndex = await checkTodoistCompletion(
@@ -795,8 +811,8 @@ async function notionManualUpdates(): Promise<void> {
  * Notion page, and updates it
  */
 async function todoistManualUpdates(): Promise<void> {
-  // get priority 3 task list from todoist
-  const taskList = (await todoistApi.getTasks({filter: 'p3'})) as Array<Task>;
+  // get priority 3 task list from todoist (API priority 2 = UI "p3")
+  const taskList = (await getAllTodoistTasks()).filter(t => t.priority === 2);
 
   // if the list has tasks
   if (taskList.length) {
