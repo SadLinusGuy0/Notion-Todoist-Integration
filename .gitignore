@@ -13,3 +13,9 @@
 
 # editor configuration
 .editorconfig
+
+# dependencies
+node_modules
+
+# compiled output
+scripts/dist
